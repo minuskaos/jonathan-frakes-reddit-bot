@@ -1,7 +1,9 @@
 {
   "bot_enabled": true,
   "dry_run": true,
-  "keyword": "Jonathan Frakes",
+  "keywords": [
+    "Jonathan Frakes"
+  ],
   "match_mode": "contains",
   "case_sensitive": false,
   "subreddits": "all",

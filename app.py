@@ -80,6 +80,9 @@ class ConfigManager:
                 with source.open("r", encoding="utf-8") as f:
                     loaded = json.load(f)
                 if isinstance(loaded, dict):
+                    # Migrate v2 single-keyword configs automatically.
+                    if "keywords" not in loaded and loaded.get("keyword"):
+                        loaded["keywords"] = [loaded["keyword"]]
                     data.update(loaded)
             except Exception as exc:
                 log.error("Could not load config: %s", exc)
@@ -89,9 +92,24 @@ class ConfigManager:
         return data
 
     def _validate(self, c):
-        c["keyword"] = str(c.get("keyword", "Jonathan Frakes")).strip()
-        if not c["keyword"]:
-            raise ValueError("Keyword cannot be empty")
+        keywords = c.get("keywords", ["Jonathan Frakes"])
+        if isinstance(keywords, str):
+            keywords = keywords.splitlines()
+        if not isinstance(keywords, list):
+            keywords = []
+        # De-duplicate while preserving display order.
+        seen = set()
+        clean_keywords = []
+        for value in keywords:
+            value = str(value).strip()
+            key = value.casefold()
+            if value and key not in seen:
+                seen.add(key)
+                clean_keywords.append(value)
+        if not clean_keywords:
+            raise ValueError("At least one keyword is required")
+        c["keywords"] = clean_keywords
+        c.pop("keyword", None)
         c["match_mode"] = c.get("match_mode", "contains")
         if c["match_mode"] not in {"contains", "whole_word", "exact"}:
             c["match_mode"] = "contains"
@@ -175,6 +193,10 @@ class DataStore:
                     key TEXT PRIMARY KEY,
                     value INTEGER NOT NULL DEFAULT 0
                 );
+                CREATE TABLE IF NOT EXISTS keyword_stats (
+                    keyword TEXT PRIMARY KEY,
+                    value INTEGER NOT NULL DEFAULT 0
+                );
                 CREATE TABLE IF NOT EXISTS activity (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ts INTEGER NOT NULL,
@@ -198,6 +220,19 @@ class DataStore:
     def inc(self, key, amount=1):
         with self.lock:
             self.stats[key] = self.stats.get(key, 0) + amount
+
+    def inc_keyword(self, keyword, amount=1):
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO keyword_stats(keyword,value) VALUES(?,?) "
+                "ON CONFLICT(keyword) DO UPDATE SET value=value+excluded.value",
+                (keyword, amount),
+            )
+
+    def keyword_stats_snapshot(self):
+        with self.connect() as conn:
+            rows = conn.execute("SELECT keyword,value FROM keyword_stats ORDER BY value DESC, keyword COLLATE NOCASE").fetchall()
+        return {row["keyword"]: int(row["value"]) for row in rows}
 
     def stats_snapshot(self):
         with self.lock:
@@ -223,6 +258,8 @@ class DataStore:
         with self.lock:
             self.stats = {k: 0 for k in self.STAT_KEYS}
         self.flush_stats()
+        with self.connect() as conn:
+            conn.execute("DELETE FROM keyword_stats")
 
     def is_processed(self, fullname):
         with self.connect() as conn:
@@ -409,19 +446,23 @@ class BotManager:
         return getattr(item, "body", "")
 
     @staticmethod
-    def _matches(text, config):
-        keyword = config["keyword"]
-        if not config["case_sensitive"]:
-            text_cmp, key_cmp = text.lower(), keyword.lower()
-        else:
-            text_cmp, key_cmp = text, keyword
+    def _matching_keywords(text, config):
+        matched = []
         mode = config["match_mode"]
-        if mode == "exact":
-            return text_cmp.strip() == key_cmp
-        if mode == "whole_word":
-            flags = 0 if config["case_sensitive"] else re.IGNORECASE
-            return re.search(r"(?<!\w)" + re.escape(keyword) + r"(?!\w)", text, flags) is not None
-        return key_cmp in text_cmp
+        case_sensitive = config["case_sensitive"]
+        text_cmp = text if case_sensitive else text.casefold()
+        flags = 0 if case_sensitive else re.IGNORECASE
+        for keyword in config["keywords"]:
+            key_cmp = keyword if case_sensitive else keyword.casefold()
+            if mode == "exact":
+                ok = text_cmp.strip() == key_cmp
+            elif mode == "whole_word":
+                ok = re.search(r"(?<!\w)" + re.escape(keyword) + r"(?!\w)", text, flags) is not None
+            else:
+                ok = key_cmp in text_cmp
+            if ok:
+                matched.append(keyword)
+        return matched
 
     def _thread_id(self, item, kind):
         if kind == "submissions":
@@ -458,10 +499,13 @@ class BotManager:
         self.store.inc("items_seen")
         self.store.inc("comments_seen" if kind == "comments" else "submissions_seen")
         text = self._item_text(item, kind)
-        if not self._matches(text, c):
+        matched_keywords = self._matching_keywords(text, c)
+        if not matched_keywords:
             return
 
         self.store.inc("matches_found")
+        for keyword in matched_keywords:
+            self.store.inc_keyword(keyword)
         self.last_match_at = int(time.time())
         fullname = getattr(item, "fullname", "")
         subreddit = str(getattr(item, "subreddit", ""))
@@ -610,7 +654,7 @@ PAGE = r'''<!doctype html>
       <label class="check"><input id="monitor_submissions" type="checkbox"> Posts</label>
     </div>
     <div class="formgrid">
-      <div><label>Keyword</label><input id="keyword"></div>
+      <div class="full"><label>Keywords, one per line</label><textarea id="keywords" placeholder="Jonathan Frakes&#10;Beyond Belief&#10;Fact or Fiction"></textarea><div class="hint">A post or comment matches when any configured keyword matches.</div></div>
       <div><label>Match mode</label><select id="match_mode"><option value="contains">Contains</option><option value="whole_word">Whole phrase boundary</option><option value="exact">Exact entire text</option></select></div>
       <div class="full"><label>Subreddits</label><input id="subreddits" placeholder="all or AskReddit+television"><div class="hint">Use all, one subreddit, or PRAW multi syntax such as television+AskReddit.</div></div>
       <div><label>Reply probability (%)</label><input id="reply_probability_percent" type="number" min="0" max="100"></div>
@@ -639,6 +683,7 @@ PAGE = r'''<!doctype html>
   </div>
 </section>
 <section>
+  <div class="panel"><h2>Keyword matches</h2><div id="keywordstats" class="activity"><div class="small">No matches yet.</div></div></div>
   <div class="panel"><h2>Random reply preview</h2><div id="previewbox" class="preview">Click “Preview random reply”.</div></div>
   <div class="panel"><h2>Recent activity</h2><div id="activity" class="activity"><div class="small">No activity yet.</div></div></div>
   <div class="panel"><h2>Live log</h2><div id="logs" class="logs"></div></div>
@@ -646,18 +691,18 @@ PAGE = r'''<!doctype html>
 </div>
 </main><div id="toast" class="toast"></div>
 <script>
-const ids=['bot_enabled','dry_run','keyword','match_mode','case_sensitive','subreddits','monitor_comments','monitor_submissions','context_enabled','context_url','context_label','reply_prefix','reply_suffix','reply_probability_percent','avoid_recent_questions','one_reply_per_thread','max_replies_per_hour','max_replies_per_day','min_seconds_between_replies','blacklist_subreddits','blacklist_users','questions'];
+const ids=['bot_enabled','dry_run','keywords','match_mode','case_sensitive','subreddits','monitor_comments','monitor_submissions','context_enabled','context_url','context_label','reply_prefix','reply_suffix','reply_probability_percent','avoid_recent_questions','one_reply_per_thread','max_replies_per_hour','max_replies_per_day','min_seconds_between_replies','blacklist_subreddits','blacklist_users','questions'];
 let loaded=false;
 function toast(t){const e=document.getElementById('toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',2200)}
 function lines(v){return v.split('\n').map(x=>x.trim()).filter(Boolean)}
-function formConfig(){const o={}; for(const id of ids){const e=document.getElementById(id); if(e.type==='checkbox')o[id]=e.checked; else if(e.type==='number')o[id]=Number(e.value||0); else if(['blacklist_subreddits','blacklist_users','questions'].includes(id))o[id]=lines(e.value); else o[id]=e.value;} return o}
+function formConfig(){const o={}; for(const id of ids){const e=document.getElementById(id); if(e.type==='checkbox')o[id]=e.checked; else if(e.type==='number')o[id]=Number(e.value||0); else if(['keywords','blacklist_subreddits','blacklist_users','questions'].includes(id))o[id]=lines(e.value); else o[id]=e.value;} return o}
 function fill(c){for(const id of ids){const e=document.getElementById(id);if(!e||!(id in c))continue;if(e.type==='checkbox')e.checked=!!c[id];else if(Array.isArray(c[id]))e.value=c[id].join('\n');else e.value=c[id]??''}loaded=true;updateQCount()}
 function updateQCount(){document.getElementById('qcount').textContent=`(${lines(document.getElementById('questions').value).length})`}
 document.getElementById('questions').addEventListener('input',updateQCount);
 async function loadConfig(){const r=await fetch('/api/config');fill(await r.json())}
 function fmtDur(s){s=Number(s||0);if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m';if(s<86400)return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m';return Math.floor(s/86400)+'d '+Math.floor((s%86400)/3600)+'h'}
 function age(ts){if(!ts)return 'never';const s=Math.max(0,Math.floor(Date.now()/1000-ts));if(s<60)return `${s}s ago`;if(s<3600)return `${Math.floor(s/60)}m ago`;if(s<86400)return `${Math.floor(s/3600)}h ago`;return `${Math.floor(s/86400)}d ago`}
-async function refresh(){try{const [sr,ar,lr]=await Promise.all([fetch('/api/status'),fetch('/api/activity?limit=60'),fetch('/api/logs')]);const s=await sr.json(),a=await ar.json(),l=await lr.json();document.getElementById('status').textContent=s.bot.status+(s.bot.connected_as?` · u/${s.bot.connected_as}`:'');const d=document.getElementById('dot');d.className='dot '+s.bot.status.replaceAll(' ','-');for(const [k,v] of Object.entries(s.stats)){const e=document.getElementById(k);if(e)e.textContent=Number(v).toLocaleString()}document.getElementById('runtime').textContent=`Uptime: ${fmtDur(s.bot.uptime_seconds)} · Last match: ${age(s.bot.last_match_at)} · Last reply: ${age(s.bot.last_reply_at)}`;const n=document.getElementById('notice');if(!s.bot.credentials_present){n.style.display='block';n.textContent='Reddit credentials are not configured yet. The dashboard still works, but monitoring cannot start.'}else if(s.bot.last_error){n.style.display='block';n.textContent='Last error: '+s.bot.last_error}else n.style.display='none';const box=document.getElementById('activity');box.innerHTML=a.length?a.map(x=>`<div class="event"><div class="eventtop"><span class="kind">${esc(x.kind)}</span><span class="small">${age(x.ts)}</span></div><div>${x.subreddit?`r/${esc(x.subreddit)} `:''}${x.author?`· u/${esc(x.author)}`:''}</div><div class="small">${esc(x.detail||'')}</div>${x.permalink?`<a target="_blank" rel="noreferrer" href="${x.permalink}">Open on Reddit</a>`:''}</div>`).join(''):'<div class="small">No activity yet.</div>';const logs=document.getElementById('logs');logs.textContent=l.lines.join('\n');logs.scrollTop=logs.scrollHeight}catch(e){console.error(e)}}
+async function refresh(){try{const [sr,ar,lr]=await Promise.all([fetch('/api/status'),fetch('/api/activity?limit=60'),fetch('/api/logs')]);const s=await sr.json(),a=await ar.json(),l=await lr.json();document.getElementById('status').textContent=s.bot.status+(s.bot.connected_as?` · u/${s.bot.connected_as}`:'');const d=document.getElementById('dot');d.className='dot '+s.bot.status.replaceAll(' ','-');for(const [k,v] of Object.entries(s.stats)){const e=document.getElementById(k);if(e)e.textContent=Number(v).toLocaleString()}const ks=document.getElementById('keywordstats');const ke=Object.entries(s.keyword_stats||{});ks.innerHTML=ke.length?ke.map(([k,v])=>`<div class=\"event\"><div class=\"eventtop\"><span>${esc(k)}</span><strong>${Number(v).toLocaleString()}</strong></div></div>`).join(''):'<div class=\"small\">No matches yet.</div>';document.getElementById('runtime').textContent=`Uptime: ${fmtDur(s.bot.uptime_seconds)} · Last match: ${age(s.bot.last_match_at)} · Last reply: ${age(s.bot.last_reply_at)}`;const n=document.getElementById('notice');if(!s.bot.credentials_present){n.style.display='block';n.textContent='Reddit credentials are not configured yet. The dashboard still works, but monitoring cannot start.'}else if(s.bot.last_error){n.style.display='block';n.textContent='Last error: '+s.bot.last_error}else n.style.display='none';const box=document.getElementById('activity');box.innerHTML=a.length?a.map(x=>`<div class="event"><div class="eventtop"><span class="kind">${esc(x.kind)}</span><span class="small">${age(x.ts)}</span></div><div>${x.subreddit?`r/${esc(x.subreddit)} `:''}${x.author?`· u/${esc(x.author)}`:''}</div><div class="small">${esc(x.detail||'')}</div>${x.permalink?`<a target="_blank" rel="noreferrer" href="${x.permalink}">Open on Reddit</a>`:''}</div>`).join(''):'<div class="small">No activity yet.</div>';const logs=document.getElementById('logs');logs.textContent=l.lines.join('\n');logs.scrollTop=logs.scrollHeight}catch(e){console.error(e)}}
 function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 document.getElementById('save').onclick=async()=>{const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(formConfig())});const j=await r.json();if(!r.ok){toast(j.error||'Save failed');return}fill(j);toast('Saved. Bot restarted with new settings.')}
 document.getElementById('preview').onclick=async()=>{const r=await fetch('/api/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(formConfig())});const j=await r.json();document.getElementById('previewbox').textContent=j.reply||j.error}
@@ -706,7 +751,7 @@ def api_preview():
 
 @app.get("/api/status")
 def api_status():
-    return jsonify(bot=bot.snapshot(), stats=store.stats_snapshot())
+    return jsonify(bot=bot.snapshot(), stats=store.stats_snapshot(), keyword_stats=store.keyword_stats_snapshot())
 
 
 @app.get("/api/activity")

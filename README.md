@@ -9,7 +9,7 @@ Open `http://YOUR-UNRAID-IP:8787`.
 From the UI you can edit:
 
 - Bot on/off and dry-run mode
-- Search keyword and match mode
+- Multiple search keywords, one per line, and match mode
 - Subreddit scope
 - Monitor comments, posts, or both
 - The single global Context URL
@@ -23,7 +23,7 @@ From the UI you can edit:
 - Subreddit and username blacklists
 - The complete question list, one question per line
 
-The dashboard also shows counters, recent matches/replies/skips, connection state, and a live log.
+The dashboard also shows counters, per-keyword match counts, recent matches/replies/skips, connection state, and a live log.
 
 ## Persistent data
 
