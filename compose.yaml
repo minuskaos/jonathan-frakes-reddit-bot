@@ -1,0 +1,10 @@
+services:
+  frakes-reddit-bot:
+    build: .
+    container_name: frakes-reddit-bot
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8787:8787"
+    volumes:
+      - /mnt/user/appdata/frakes-reddit-bot:/data
