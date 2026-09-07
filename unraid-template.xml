@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Jonathan-Frakes-Reddit-Bot</Name>
+  <Repository>ghcr.io/minuskaos/jonathan-frakes-reddit-bot:latest</Repository>
+  <Registry>https://github.com/minuskaos/jonathan-frakes-reddit-bot/pkgs/container/jonathan-frakes-reddit-bot</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/minuskaos/jonathan-frakes-reddit-bot/issues</Support>
+  <Project>https://github.com/minuskaos/jonathan-frakes-reddit-bot</Project>
+  <Overview>Watches Reddit for configured Jonathan Frakes matches and replies with a random Beyond Belief: Fact or Fiction? question. Includes a local dashboard for settings, counters, activity, and logs.</Overview>
+  <Category>Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8787]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/minuskaos/jonathan-frakes-reddit-bot/main/unraid-template.xml</TemplateURL>
+  <Icon>https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/reddit.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled>0</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Description>Jonathan Frakes Reddit bot with local web UI, editable settings, counters, activity history, and logs.</Description>
+
+  <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/jonathan-frakes-reddit-bot" Mode="rw" Description="Persistent settings, counters, state, and history." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/jonathan-frakes-reddit-bot</Config>
+  <Config Name="WebUI Port" Target="8787" Default="8788" Mode="tcp" Description="Unraid host port for the dashboard. Internal container port remains 8787." Type="Port" Display="always" Required="true" Mask="false">8788</Config>
+
+  <Config Name="Reddit Client ID" Target="REDDIT_CLIENT_ID" Default="" Mode="" Description="Reddit OAuth client ID." Type="Variable" Display="always" Required="true" Mask="false"></Config>
+  <Config Name="Reddit Client Secret" Target="REDDIT_CLIENT_SECRET" Default="" Mode="" Description="Reddit OAuth client secret." Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="Reddit Username" Target="REDDIT_USERNAME" Default="JonathanFrakesAsks" Mode="" Description="Reddit account used by the bot." Type="Variable" Display="always" Required="true" Mask="false">JonathanFrakesAsks</Config>
+  <Config Name="Reddit Password" Target="REDDIT_PASSWORD" Default="" Mode="" Description="Password for the Reddit bot account." Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="Reddit User Agent" Target="REDDIT_USER_AGENT" Default="linux:frakes-reddit-bot:v2.0 (by /u/JonathanFrakesAsks)" Mode="" Description="User-Agent sent to Reddit." Type="Variable" Display="advanced" Required="true" Mask="false">linux:frakes-reddit-bot:v2.0 (by /u/JonathanFrakesAsks)</Config>
+
+  <Config Name="Dashboard Username" Target="UI_USERNAME" Default="frakes" Mode="" Description="Optional dashboard username. Used only when Dashboard Password is set." Type="Variable" Display="advanced" Required="false" Mask="false">frakes</Config>
+  <Config Name="Dashboard Password" Target="UI_PASSWORD" Default="" Mode="" Description="Optional dashboard password. Leave blank to disable dashboard authentication." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="Log Level" Target="LOG_LEVEL" Default="INFO" Mode="" Description="Logging level: DEBUG, INFO, WARNING, ERROR, or CRITICAL." Type="Variable" Display="advanced" Required="true" Mask="false">INFO</Config>
+  <Config Name="Internal Web Port" Target="WEB_PORT" Default="8787" Mode="" Description="Internal dashboard port. Normally leave this at 8787." Type="Variable" Display="advanced-hide" Required="true" Mask="false">8787</Config>
+</Container>

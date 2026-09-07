@@ -53,3 +53,15 @@ Was the sister's husband really the victim of amnesia?
 ```
 
 Change the URL once in the dashboard and every reply uses the new value.
+
+## Native Unraid install
+
+The repository includes `unraid-template.xml` for a normal Unraid Docker entry with an icon, WebUI button, appdata mapping, editable port, and Reddit/dashboard environment variables.
+
+The Docker image is built automatically by GitHub Actions and published as:
+
+`ghcr.io/minuskaos/jonathan-frakes-reddit-bot:latest`
+
+After the first successful GitHub Actions build, install the template into Unraid's user templates and add the container from **Docker -> Add Container -> Template**.
+
+The template defaults the host WebUI port to `8788` while keeping the container's internal port at `8787`.

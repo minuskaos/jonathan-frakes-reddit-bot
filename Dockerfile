@@ -1,4 +1,6 @@
 FROM python:3.13-slim
+LABEL org.opencontainers.image.source="https://github.com/minuskaos/jonathan-frakes-reddit-bot"
+LABEL org.opencontainers.image.description="Jonathan Frakes Reddit watcher bot with an Unraid-friendly web dashboard"
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
